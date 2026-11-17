@@ -6,11 +6,20 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test --test-force-exit"
+    "test": "node --test --test-force-exit",
+    "lint": "eslint src test public",
+    "check": "mise run check"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "author": "Talgat <talgatzhunis@gmail.com>",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@typespec/compiler": "1.18.0",
+    "@typespec/http": "1.18.0",
+    "@typespec/openapi3": "1.18.0",
+    "@typespec/rest": "0.88.0",
+    "globals": "16.5.0"
+  }
 }

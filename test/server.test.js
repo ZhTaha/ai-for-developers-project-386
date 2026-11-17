@@ -71,7 +71,7 @@ test('GET /api/slots отклоняет неверную дату', async () => 
   assert.equal(res.status, 400);
 });
 
-test('старая бронь без durationMinutes читается как 15-минутная', async (t) => {
+test('старая бронь без durationMinutes читается как 15-минутная', async () => {
   // подсадим файл хранилища со «старой» бронью без durationMinutes
   const fs = require('node:fs');
   const oldDb = {

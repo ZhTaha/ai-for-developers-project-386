@@ -3,3 +3,4 @@ data.json
 *.log
 .idea/
 .DS_Store
+typespec/generated/

@@ -33,7 +33,7 @@ function readBody(req) {
     req.on('end', () => {
       try {
         resolve(raw ? JSON.parse(raw) : {});
-      } catch (err) {
+      } catch {
         reject(new Error('invalid JSON'));
       }
     });
