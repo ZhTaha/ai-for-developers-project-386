@@ -50,11 +50,11 @@ test('POST /api/event-types валидирует входные данные', a
 });
 
 test('GET /api/slots считает слоты по расписанию и дню недели', async () => {
-  // 2026-11-16 — понедельник, 09:00–18:00, слот 30 мин => 18 слотов
+  // 2026-11-16 — понедельник, 09:00–18:00, сетка 15 мин => 36 слотов
   const res = await fetch(`${baseUrl}/api/slots?date=2026-11-16`);
   assert.equal(res.status, 200);
   const slots = await res.json();
-  assert.equal(slots.length, 18);
+  assert.equal(slots.length, 36);
   assert.equal(slots[0].start, '2026-11-16T09:00');
   assert.equal(slots[0].booked, false);
 });
@@ -88,6 +88,69 @@ test('старая бронь без durationMinutes читается как 15-
   const bookings = await res.json();
   const old = bookings.find((b) => b.id === 'old-booking');
   assert.equal(old.durationMinutes, 15);
+});
+
+test('60-минутная бронь блокирует все пересекающиеся 15-минутные слоты', async () => {
+  const types = await (await fetch(`${baseUrl}/api/event-types`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Час', durationMinutes: 60 }),
+  })).json();
+  const res = await fetch(`${baseUrl}/api/bookings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slotStart: '2026-11-16T10:00', eventTypeId: types.id, guestName: 'Гость', guestEmail: 'g@example.com' }),
+  });
+  assert.equal(res.status, 201);
+  const booking = await res.json();
+  assert.equal(booking.durationMinutes, 60);
+
+  const slots = await (await fetch(`${baseUrl}/api/slots?date=2026-11-16`)).json();
+  const busy = slots.filter((s) => s.booked).map((s) => s.start);
+  assert.deepEqual(busy, ['2026-11-16T10:00', '2026-11-16T10:15', '2026-11-16T10:30', '2026-11-16T10:45']);
+  // примыкающий вплотную слот свободен
+  assert.equal(slots.find((s) => s.start === '2026-11-16T11:00').booked, false);
+});
+
+test('отмена брони освобождает все её слоты', async () => {
+  const types = await (await fetch(`${baseUrl}/api/event-types`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Час', durationMinutes: 60 }),
+  })).json();
+  const booking = await (
+    await fetch(`${baseUrl}/api/bookings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slotStart: '2026-11-16T10:00', eventTypeId: types.id, guestName: 'Г', guestEmail: 'g@example.com' }),
+    })
+  ).json();
+
+  const del = await fetch(`${baseUrl}/api/bookings/${booking.id}`, { method: 'DELETE' });
+  assert.equal(del.status, 204);
+
+  const slots = await (await fetch(`${baseUrl}/api/slots?date=2026-11-16`)).json();
+  assert.equal(slots.every((s) => !s.booked), true);
+});
+
+test('slotStart вне 15-минутной сетки отклоняется с 400', async () => {
+  const types = await (await fetch(`${baseUrl}/api/event-types`)).json();
+  const res = await fetch(`${baseUrl}/api/bookings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slotStart: '2026-11-16T10:10', eventTypeId: types[0].id, guestName: 'Г', guestEmail: 'g@example.com' }),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('встреча может начинаться в последнем интервале окна (выход за endTime)', async () => {
+  const types = await (await fetch(`${baseUrl}/api/event-types`)).json();
+  const res = await fetch(`${baseUrl}/api/bookings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slotStart: '2026-11-16T17:45', eventTypeId: types[0].id, guestName: 'Г', guestEmail: 'g@example.com' }),
+  });
+  assert.equal(res.status, 201);
 });
 
 test('гость может записаться на свободный слот', async () => {
@@ -186,9 +249,9 @@ test('PUT /api/availability обновляет расписание', async () =
   });
   assert.equal(res.status, 200);
 
-  // суббота 2026-11-14, 12:00–14:00 => 4 слота по 30 минут
+  // суббота 2026-11-14, 12:00–14:00 => 8 слотов по 15 минут
   const slots = await (await fetch(`${baseUrl}/api/slots?date=2026-11-14`)).json();
-  assert.equal(slots.length, 4);
+  assert.equal(slots.length, 8);
 });
 
 test('статический фронтенд отдаётся на /', async () => {

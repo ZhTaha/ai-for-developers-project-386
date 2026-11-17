@@ -9,7 +9,7 @@ const calendar = require('./calendar');
 const store = require('./data');
 
 const PORT = Number(process.env.PORT) || 3000;
-const SLOT_MINUTES = Number(process.env.SLOT_MINUTES) || 30;
+const SLOT_MINUTES = Number(process.env.SLOT_MINUTES) || 15;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 const MIME = {
@@ -115,10 +115,14 @@ async function handleApi(req, res, url) {
     if (!slotStart || !eventTypeId || !guestName || !guestEmail) {
       return json(res, 400, { error: 'slotStart, eventTypeId, guestName, guestEmail обязательны' });
     }
-    if (!db.eventTypes.some((t) => t.id === eventTypeId)) {
+    const eventType = db.eventTypes.find((t) => t.id === eventTypeId);
+    if (!eventType) {
       return json(res, 404, { error: 'тип встречи не найден' });
     }
-    const eventType = db.eventTypes.find((t) => t.id === eventTypeId);
+    // slotStart должен быть на 15-минутной сетке
+    if (!calendar.isOnGrid(slotStart, SLOT_MINUTES)) {
+      return json(res, 400, { error: 'slotStart должен быть на 15-минутной сетке' });
+    }
     if (!calendar.isSlotBookable(db.availability, slotStart, db.bookings, SLOT_MINUTES)) {
       return json(res, 409, { error: 'слот занят или вне расписания' });
     }

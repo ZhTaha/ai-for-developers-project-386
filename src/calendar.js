@@ -1,7 +1,29 @@
 // Логика вычисления слотов на основе расписания доступности и броней.
 // Чистые функции — легко тестируются отдельно от сервера.
 
-const WEEK_MINUTES = 7 * 24 * 60;
+const DEFAULT_SLOT_MINUTES = 15;
+
+/** Минуты от полуночи до начала брони (для slotStart «YYYY-MM-DDTHH:MM») */
+function bookingMinutes(b) {
+  return parseHHMM(parseSlotStart(b.slotStart).time);
+}
+
+/** Длительность брони; без durationMinutes считаем короткой (15 минут) */
+function bookingDuration(b) {
+  return Number.isInteger(b.durationMinutes) && b.durationMinutes > 0 ? b.durationMinutes : 15;
+}
+
+/** Пересекается ли слот [t, t + slotMinutes) с интервалом брони [bs, bs + bd) */
+function overlaps(t, slotMinutes, bookingStart, bookingDuration) {
+  return t < bookingStart + bookingDuration && bookingStart < t + slotMinutes;
+}
+
+/** Занятые интервалы броней в минутах от полуночи данной даты */
+function busyIntervalsForDate(bookings, date) {
+  return bookings
+    .filter((b) => parseSlotStart(b.slotStart).date === date)
+    .map((b) => ({ start: bookingMinutes(b), duration: bookingDuration(b) }));
+}
 
 function parseHHMM(value) {
   const [h, m] = String(value).split(':').map(Number);
@@ -43,15 +65,15 @@ function weekdayOf(dateStr) {
 }
 
 /**
- * Вычисляет слоты на дату.
+ * Вычисляет слоты на дату (15-минутная сетка).
  * @param {object} availability { weekdays: number[], startTime, endTime }
  * @param {string} date «YYYY-MM-DD»
- * @param {Array<{slotStart: string, durationMinutes: number}>} bookings занятые слоты
+ * @param {Array<{slotStart: string, durationMinutes?: number}>} bookings занятые интервалы
  * @param {Array<{id: string, durationMinutes: number}>} eventTypes типы встреч
- * @param {number} [slotMinutes] длительность слота (по умолчанию 30)
+ * @param {number} [slotMinutes] шаг сетки (по умолчанию 15)
  * @returns {Array<{start: string, end: string, booked: boolean}>}
  */
-function slotsForDate(availability, date, bookings, eventTypes, slotMinutes = 30) {
+function slotsForDate(availability, date, bookings, eventTypes, slotMinutes = DEFAULT_SLOT_MINUTES) {
   const weekday = weekdayOf(date);
   if (!availability.weekdays.includes(weekday)) return [];
 
@@ -59,36 +81,53 @@ function slotsForDate(availability, date, bookings, eventTypes, slotMinutes = 30
   const endMin = parseHHMM(availability.endTime);
   if (endMin <= startMin) return [];
 
-  const busy = new Set(
-    bookings.map((b) => parseSlotStart(b.slotStart).date === date && parseSlotStart(b.slotStart).time)
-  );
+  const intervals = busyIntervalsForDate(bookings, date);
 
   const slots = [];
-  for (let t = startMin; t + slotMinutes <= endMin; t += slotMinutes) {
+  for (let t = startMin; t < endMin; t += slotMinutes) {
     const time = minutesToHHMM(t);
-    const end = minutesToHHMM(Math.min(t + slotMinutes, endMin));
+    // последняя встреча дня может выходить за endTime — конец слота не обрезаем жёстко
+    const end = minutesToHHMM(t + slotMinutes);
     slots.push({
       start: `${date}T${time}`,
       end: `${date}T${end}`,
-      booked: busy.has(time),
+      booked: intervals.some((iv) => overlaps(t, slotMinutes, iv.start, iv.duration)),
     });
   }
   return slots;
 }
 
-/** Проверка, что слот свободен и внутри расписания */
-function isSlotBookable(availability, slotStart, bookings, slotMinutes = 30) {
+/**
+ * Проверка, что slotStart бронируем: на сетке, внутри окна доступности и без пересечения с бронями.
+ * Встреча может начаться в последнем интервале окна и выйти за endTime.
+ */
+function isSlotBookable(availability, slotStart, bookings, slotMinutes = DEFAULT_SLOT_MINUTES) {
   const { date, time } = parseSlotStart(slotStart);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return false;
 
-  const all = slotsForDate(availability, date, bookings, [], slotMinutes);
-  const slot = all.find((s) => s.start === slotStart);
-  return Boolean(slot && !slot.booked);
+  const t = parseHHMM(time);
+  if (t % slotMinutes !== 0) return false;
+
+  const startMin = parseHHMM(availability.startTime);
+  const endMin = parseHHMM(availability.endTime);
+  if (!availability.weekdays.includes(weekdayOf(date))) return false;
+  if (t < startMin || t >= endMin) return false;
+
+  const intervals = busyIntervalsForDate(bookings, date);
+  return !intervals.some((iv) => overlaps(t, slotMinutes, iv.start, iv.duration));
+}
+
+/** slotStart «YYYY-MM-DDTHH:MM» на сетке slotMinutes? */
+function isOnGrid(slotStart, slotMinutes = DEFAULT_SLOT_MINUTES) {
+  const { time } = parseSlotStart(slotStart);
+  if (!/^\d{2}:\d{2}$/.test(time || '')) return false;
+  return parseHHMM(time) % slotMinutes === 0;
 }
 
 module.exports = {
   slotsForDate,
   isSlotBookable,
+  isOnGrid,
   weekdayOf,
   slotToUTCDate,
   utcDateToSlot,
