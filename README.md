@@ -63,12 +63,13 @@
 
 ## Установка
 
-Требуется установленный Node.js версии 20 или выше.
+Требуется [mise](https://mise.jdx.dev) (версии инструментов зафиксированы в `mise.toml`).
 
 ```bash
 git clone https://github.com/ZhTaha/ai-for-developers-project-386.git
 cd ai-for-developers-project-386
-make install
+mise install
+npm install
 ```
 
 ## Использование
@@ -76,13 +77,20 @@ make install
 Запуск приложения:
 
 ```bash
-make start
+mise run start
 ```
 
-Запуск тестов (интеграционные и E2E):
+Фоновый dev-сервер (под управлением pitchfork):
 
 ```bash
-make test
+mise daemons start server
+mise daemons stop server
+```
+
+Проверки (контракт TypeSpec → OpenAPI, ESLint, тесты):
+
+```bash
+mise run check
 ```
 
 Запуск в Docker:
