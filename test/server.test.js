@@ -71,6 +71,25 @@ test('GET /api/slots отклоняет неверную дату', async () => 
   assert.equal(res.status, 400);
 });
 
+test('старая бронь без durationMinutes читается как 15-минутная', async (t) => {
+  // подсадим файл хранилища со «старой» бронью без durationMinutes
+  const fs = require('node:fs');
+  const oldDb = {
+    eventTypes: [{ id: 'old-type', name: 'Старый тип', durationMinutes: 60 }],
+    availability: { weekdays: [1], startTime: '09:00', endTime: '18:00' },
+    bookings: [
+      { id: 'old-booking', slotStart: '2026-11-16T10:00', eventTypeId: 'old-type', guestName: 'Старый гость', guestEmail: 'old@example.com' },
+    ],
+  };
+  fs.writeFileSync(process.env.DATA_FILE, JSON.stringify(oldDb));
+
+  const res = await fetch(`${baseUrl}/api/bookings`);
+  assert.equal(res.status, 200);
+  const bookings = await res.json();
+  const old = bookings.find((b) => b.id === 'old-booking');
+  assert.equal(old.durationMinutes, 15);
+});
+
 test('гость может записаться на свободный слот', async () => {
   const types = await (await fetch(`${baseUrl}/api/event-types`)).json();
   const res = await fetch(`${baseUrl}/api/bookings`, {

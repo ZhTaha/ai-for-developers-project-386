@@ -118,10 +118,11 @@ async function handleApi(req, res, url) {
     if (!db.eventTypes.some((t) => t.id === eventTypeId)) {
       return json(res, 404, { error: 'тип встречи не найден' });
     }
+    const eventType = db.eventTypes.find((t) => t.id === eventTypeId);
     if (!calendar.isSlotBookable(db.availability, slotStart, db.bookings, SLOT_MINUTES)) {
       return json(res, 409, { error: 'слот занят или вне расписания' });
     }
-    const booking = { id: uuid(), slotStart, eventTypeId, guestName, guestEmail, comment: comment || '' };
+    const booking = { id: uuid(), slotStart, eventTypeId, guestName, guestEmail, comment: comment || '', durationMinutes: eventType.durationMinutes };
     db.bookings.push(booking);
     store.save();
     return json(res, 201, booking);

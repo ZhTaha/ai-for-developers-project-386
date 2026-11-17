@@ -33,8 +33,10 @@ model Availability {
 /** Бронь на слот */
 model Booking {
   id: string;
-  /** ISO-начало слота: «2026-11-20T10:00» */
+  /** ISO-начало слота на 15-минутной сетке: «2026-11-20T10:00», «2026-11-20T10:15» */
   slotStart: string;
+  /** Длительность встречи в минутах, на момент бронирования */
+  durationMinutes: int32;
   eventTypeId: string;
   guestName: string;
   guestEmail: string;
@@ -78,7 +80,7 @@ namespace CalendarApi {
   interface Bookings {
     /** Все брони (для владельца) */
     @get list(): Booking[];
-    /** Записаться на свободный слот (гость) */
+    /** Записаться на свободный слот (гость); slotStart — на 15-минутной сетке; длительность берётся из типа встречи */
     @post create(@body body: { slotStart: string; eventTypeId: string; guestName: string; guestEmail: string; comment?: string; }): Booking;
     /** Отменить бронь — слот освобождается */
     @delete remove(@path id: string): void;

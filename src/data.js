@@ -23,10 +23,18 @@ const defaults = {
 
 let cache = null;
 
+const DEFAULT_BOOKING_MINUTES = 15;
+
+/** Обратная совместимость: старые брони без durationMinutes считаются 15-минутными */
+function normalizeBooking(b) {
+  return { durationMinutes: DEFAULT_BOOKING_MINUTES, ...b };
+}
+
 function load() {
   if (cache) return cache;
   try {
-    cache = { ...defaults, ...JSON.parse(fs.readFileSync(dataFile(), 'utf8')) };
+    const parsed = JSON.parse(fs.readFileSync(dataFile(), 'utf8'));
+    cache = { ...defaults, ...parsed, bookings: (parsed.bookings || defaults.bookings).map(normalizeBooking) };
   } catch {
     cache = structuredClone(defaults);
   }
