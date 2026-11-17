@@ -259,3 +259,22 @@ test('статический фронтенд отдаётся на /', async ()
   assert.equal(res.status, 200);
   assert.match(await res.text(), /Календарь звонков/);
 });
+
+test('главная страница рассказывает о сервисе и ведёт на страницу записи', async () => {
+  const res = await fetch(baseUrl);
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(res.headers.get('content-type'), /text\/html/);
+  assert.match(html, /Календарь звонков/);
+  assert.match(html, /сервис бронирования/);
+  assert.match(html, /href="\/book"/);
+});
+
+test('страница записи отдаётся на /book', async () => {
+  const res = await fetch(`${baseUrl}/book`);
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(res.headers.get('content-type'), /text\/html/);
+  assert.match(html, /Запись на звонок/);
+  assert.match(html, /href="\/"/); // ссылка назад на главную
+});

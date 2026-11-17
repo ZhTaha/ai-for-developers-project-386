@@ -146,7 +146,7 @@ async function handleApi(req, res, url) {
 }
 
 function serveStatic(res, pathname) {
-  const file = pathname === '/' ? 'index.html' : pathname.replace(/^\//, '');
+  const file = pathname === '/' ? 'index.html' : pathname === '/book' ? 'book.html' : pathname.replace(/^\//, '');
   const full = path.join(PUBLIC_DIR, file);
   if (!full.startsWith(PUBLIC_DIR) || !fs.existsSync(full) || fs.statSync(full).isDirectory()) {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
