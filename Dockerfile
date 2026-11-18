@@ -12,11 +12,11 @@ RUN npm install -g @typespec/compiler@1.18.0 @typespec/http@1.18.0
 
 # Copy package files and install dependencies
 COPY package*.json ./
-RUN npm install --production
+RUN npm install --production --silent
 
 # Copy TypeSpec source and generate OpenAPI
 COPY typespec/ ./typespec/
-RUN npx tsp compile ./typespec
+RUN tsp compile ./typespec
 
 # Copy source code and scripts
 COPY src/ ./src/
@@ -33,7 +33,6 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 # Copy built artifacts from builder stage
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/dist ./dist 2>/dev/null || true
 COPY --from=builder /app/typespec/generated ./typespec/generated
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/src ./src
@@ -52,6 +51,4 @@ EXPOSE ${PORT}
 USER appuser
 
 # Start the application automatically
-# The server.js exports a 'start' function that creates the HTTP server
-# and the entry point is set to start the server
 CMD ["node", "src/server.js"]
