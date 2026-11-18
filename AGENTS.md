@@ -20,6 +20,14 @@
 
 ## Agent skills
 
-- Issues: `.scratch/<feature-slug>/` — см. `docs/agents/issue-tracker.md`
-- Triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix` — см. `docs/agents/triage-labels.md`
-- Domain docs: `GLOSSARY.md`, `docs/adr/` — см. `docs/agents/domain.md`
+### Issue tracker
+
+Issues live in this repo's GitHub Issues (`ZhTaha/ai-for-developers-project-386`), managed via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default triage vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` at the repo root, decisions in `docs/adr/`. See `docs/agents/domain.md`.
