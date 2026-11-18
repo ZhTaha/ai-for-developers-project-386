@@ -1,1 +1,7 @@
-{"package-name": "", "release-type": "node", "major": { "include": "chores" }, "minor": { "include": "features" }, "patch": { "include": "fixes" }, "discarder": false, "filter": "^(?!privacy).*"}
+{
+  "release-type": "node",
+  "major": { "include": "chores" },
+  "minor": { "include": "features" },
+  "patch": { "include": "fixes" },
+  "discarder": false
+}
