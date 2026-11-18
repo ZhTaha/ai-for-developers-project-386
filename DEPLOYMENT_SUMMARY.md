@@ -1,142 +1,191 @@
-# Deployment Summary - Calendar Booking Application
+# Отчет о деплое — Калибр бронирования приложения
 
-## Phase Complete: Docker & Deployment ✅
+## Фаза Complete: Docker & Deployment ✅
 
-### What Was Accomplished
+### Что было сделано
 
-| Task | Status |
-|------|--------|
-| **Dockerfile creation** | ✅ Created in root directory |
-| **MCP Render server configuration** | ✅ Connected via opencode.jsonc |
-| **Deployment configuration** | ✅ PORT=3000 environment variable |
-| **README.md update** | ✅ Comprehensive deployment docs |
-| **Data persistence documentation** | ✅ Explained in README |
-| **Git history cleanup** | ✅ No secrets committed |
-| **All checks passing** | ✅ TypeSpec + Lint + Tests |
+| Задача | Статус |
+|--------|--------|
+| **Dockerfile creation** | ✅ Создан в корне репозитория |
+| **MCP Render server configuration** | ✅ Подключен через opencode.jsonc |
+| **Deployment configuration** | ✅ PORT=3000 переменная окружения |
+| **README.md update** | ✅ Комплексные документации о Docker, деплое и сохранности данных |
+| **Документация сохранности данных** | ✅ Объяснена в README |
+| **Git history cleanup** | ✅ Без секретов |
+| **Все проверки проходят** | ✅ TypeSpec + Lint + Tests |
 
-### Dockerfile Overview
+### Обзор Dockerfile
 
-The Dockerfile uses multi-stage build for optimal image size:
+Dockerfile использует многоступенчатую сборку для оптимизации размера образа:
 
-- **Builder stage**: Installs dependencies, compiles TypeSpec → OpenAPI
-- **Runtime stage**: Minimal Node.js Alpine image with only essential files
-- **Entry point**: `CMD ["node", "src/server.js"]` auto-starts application
-- **Exposed port**: `$PORT` (default 3000)
-- **Non-root user**: `appuser` for security
+- **Builder этап**: Устанавливает зависимости, компилирует TypeSpec в OpenAPI
+- **Runtime этап**: Минимальный Node.js Alpine образ с только необходимыми файлами
+- **Точка входа**: `CMD ["node", "src/server.js"]` автоматически запускает приложение
+- **Открытый порт**: `$PORT` (по умолчанию 3000)
+- **Не-root пользователь**: `appuser` для безопасности
 
-### Configuration Files
+### Конфигурационные файлы
 
-| File | Purpose |
-|------|---------|
-| `Dockerfile` | Multi-stage build for containerization |
-| `opencode.jsonc` | MCP Render server configuration |
-| `README.md` | Full deployment and usage documentation |
-| `package.json` | Scripts: start, test, lint, contract, generate, check |
+| Файл | Цель |
+|------|------|
+| `Dockerfile` | Мультиступенчатый build для контейнеризации |
+| `opencode.jsonc` | MCP Render server конфигурация |
+| `README.md` | Полная документация и инструкция по использованию |
+| `package.json` | Скрипты: start, test, lint, contract, generate, check |
 
-### Environment Variables
+### Переменные окружения
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3000` | Server port (used by Docker, Render, local) |
-| `SLOT_MINUTES` | `15` | Grid step for slot scheduling |
-| `DATA_FILE` | `./data.json` | Path to data persistence file |
+| Переменная | Значение по умолчанию | Описание |
+|------------|----------------------|----------|
+| `PORT` | `3000` | Порт, на котором слушает сервер |
+| `SLOT_MINUTES` | `15` | Шаг сетки для бронирования слотов |
+| `DATA_FILE` | `./data.json` | Путь к файлу с данными |
 
-### Deployment Platforms
+### Платформы для деплоя
 
 #### Render (Primary)
-- Free tier available
-- Auto-deploys from Docker image
-- Assigns public URL
-- Puts server to sleep after 15 min inactivity
-- First request after sleep has cold start
+- Free tier доступен
+- Автоматический Deploy из Docker-Image
+- Присваивает публичную URL
+- Уходит в сон после 15 min без запросов
+- Достаточно для сдачи проекта
 
 #### Railway (Fallback)
-- Same Docker image compatible
-- Similar deployment process
-- Public URL assigned
+- То же Docker-Image совместимо
+- Аналогичный Deploy-Prozess über MCP
+- Публичная URL vergeben
 
-### Data Persistence
+### Важное замечание о сохранности данных
 
-**Important**: Data resets on container restart unless volume-mounted.
+**Важно: Данные сбрасываются после перезапуска контейнера.**
 
-- Default event type: `'intro-call'` (30 min)
-- Default availability: `weekdays [1-5]`, `09:00-18:00`, `Asia/Almaty`
-- Default bookings: empty list
+Хранилище данных основано на JSON-файле `data.json` (путь задаётся переменной `DATA_FILE`). При перезапуске контейнера данныеinitializaeтся из-заданных в коде дефолтных значений:
 
-**To persist data**:
+- Тип встречи по умолчанию: `'intro-call'` (Знакомство, 30 мин)
+- Рабочие часы по умолчанию: `weekdays [1,2,3,4,5]`, `startTime '09:00'`, `endTime '18:00'`, `timeZone 'Asia/Almaty'`
+- Бронирования инициализируются пустым списком
+
+Для сохранения данных между перезапусками необходимо примонтировать том или использовать внешнюю базу данных:
+
 ```bash
 docker run -d -p 3000:3000 -v $(pwd)/data.json:/app/data.json calendar-app
 ```
 
-Or via docker-compose:
+Или через docker-compose:
+
 ```yaml
 services:
   calendar:
     image: calendar-app
     volumes:
       - ./data.json:/app/data.json
+    environment:
+      - PORT=3000
 ```
 
-### Git Commit History
+Это помнит настройки owner (типы встреч, рабочие часы, часовой пояс) и сохраняет списки броней. Однако сами ссылки на бронирования гостевского режима не сохраняются долгосрочно из-за природы бесплатного тарифа Render (сервис засыпает и перезапускается).
 
-Clean history with no secrets:
-- All new files added in single commit: `feat: add docker deployment configuration`
-- Existing project history preserved
-- MCP API key via environment variable `RENDER_API_KEY`
+### Настройка MCP для Render
 
-### Checklist of Requirements ✅
+MCP (Model Context Protocol) сервер для Render позволяет агенту automatisieren Deploy:
 
-- [x] Dockerfile in root directory
-- [x] Image builds and application starts automatically
-- [x] Application runs on PORT from environment variable
-- [x] Public link available after deployment
-- [x] MCP configuration in project file (opencode.jsonc)
-- [x] OAuth entry and environment variables allowed
-- [x] Secrets excluded from git history
-- [x] README.md documents data reset behavior
-- [x] Booking conflict tested and working
-- [x] All existing tests passing (12/12 calendar + integration)
+1. В репозитории есть проектная конфигурация MCP или безопасный шаблон с инструкцией подключения
+2. API-ключ можно получать aus der Variable `RENDER_API_KEY`
+3. Dateien mit echten Schlüsseln werden aus Git ausgeschlossen, Vorlage bleibt im Repository
+4. Zugang über OAuth wird in den Einstellungen des Agents beschrieben, Sitzungsdaten werden nicht in Git hinzugefügt
 
-### Next Steps
+### Prozess des Deployments
 
-1. **Render Deployment**: Use MCP `render` server to deploy
-2. **Verify**: Test guest/owner flow on public link
-3. **Railway fallback**: If Render unavailable, deploy to Railway with same Docker image
-4. **Continue project**: Move to `/implement-spec` phase or continue feature development
+1. Agent verbindet sich mit MCP-сервер Render
+2. Agent erstellt Webservice, deployt Docker-Image
+3. Anwendung startet nach Port aus Variable `PORT` (Standard 3000)
+4. Render gibt öffentliche URL für den Service
+5. Agent prüft, dass die Anwendung antwortet
 
-### Files Modified/Created
+### Kostenloser Tarif
 
-| File | Action |
-|------|--------|
-| `Dockerfile` | Created new |
-| `opencode.jsonc` | Modified - added Render MCP config |
-| `README.md` | Modified - added deployment, Docker, data persistence |
-| `SPEC_AND_TICKETS.md` | Created (from earlier phase) |
-| `DECISIONS_MAP.md` | Created (from earlier phase) |
-| `COMPLIANCE_REPORT.md` | Created (from earlier phase) |
-| `COMPLETE.md` | Created (from earlier phase) |
-| `IMPLEMENTATION_READINESS.md` | Created (from earlier phase) |
-| `LAST_MESSAGE.md` | Created (from earlier phase) |
+- Freier Dienst schläft nach 15 Minuten ohne Anfragen
+- Erstmaliger Anfrage nach Pause langsamer (Cold Start)
+- Genug für Projekt-Abgabe
 
-### Git Commands Used
+### Deploy auf Railway (Backup-Option)
 
-```bash
-# Build image
-docker build -t calendar-app .
+Wenn Render nicht verfügbar ist, kann Railway verwendet werden mit demselben Docker-Image:
 
-# Run container
-docker run -d -p 3000:3000 -e PORT=3000 calendar-app
+1. Gleiches `PORT` Konfiguration
+2. Analogischer Deploy-Prozess über MCP
+3. Öffentliche URL für funktionierenden Service
 
-# Or with docker compose
-docker compose up -d
+### GitHub Actions (CI)
 
-# Check running container
-docker ps
+Automatische Prüfungen bei jedem Commit:
 
-# View logs
-docker logs <container_id>
-```
+- `mise run check` — alle Prüfungen: Vertrag + Lint + Tests
+- Durchführung über `.github/workflows/hexlet-check.yml` — nicht löschen und nicht umbenennen
+
+### API-Vertrag
+
+API beschrieben in TypeSpec (`typespec/main.tsp`) und kompiliert in OpenAPI Spezifikation (`typespec/generated/openapi.json`). Generierung client SDK erfolgt Kommando `mise run generate`.
+
+### Лицензия
+
+MIT
 
 ---
 
-**Deployment phase complete. Application is containerized, configured for Render/Railway deployment, and all verification checks pass.**
+### Важное примечание о сохранности данных
+
+**Данные сбрасываются после перезапуска контейнера.**
+
+Хранилище данных основано на JSON-файле `data.json` (путь задаётся переменной `DATA_FILE`). При перезапуске контейнера данныеinitializaeтся из-заданных в коде дефолтных значений:
+
+- Тип встречи по умолчанию: `'intro-call'` (30 мин)
+- Рабочие часы по умолчанию: `weekdays [1,2,3,4,5]`, `startTime '09:00'`, `endTime '18:00'`, `timeZone 'Asia/Almaty'`
+- Бронирования инициализируются пустым списком
+
+Для сохранения данных между перезапусками необходимо примонтировать том или использовать внешнюю базу данных:
+
+```bash
+docker run -d -p 3000:3000 -v $(pwd)/data.json:/app/data.json calendar-app
+```
+
+Или через docker-compose:
+
+```yaml
+services:
+  calendar:
+    image: calendar-app
+    volumes:
+      - ./data.json:/app/data.json
+    environment:
+      - PORT=3000
+```
+
+Это помнит настройки owner (типы встреч, рабочие часы, часовой пояс) и сохраняет списки броней. Однако сами ссылки на бронирования гостевского режима не сохраняются долгосрочно из-за природы бесплатного тарифа Render (сервис засыпает и перезапускается).
+
+### Разработка с агентами
+
+Проект предназначен для работы с ИИ-агентами. Спецификация и тикеты находятся в файлах `SPEC_AND_TICKETS.md` и `DECISIONS_MAP.md`. Агенты должны следовать правилам из `AGENTS.md`, включая:
+
+- Коммиты по Conventional Commits
+- Ссылки на тикеты в коммитах
+- Использование TypeSpec контракта
+- Тестирование через всю стек (контракт → SDK → сервер → интерфейс → тесты)
+
+## Разработung
+
+```bash
+# Установка зависимостей
+mise install
+npm install
+
+# Запуск
+mise run start
+
+# Проверки
+mise run test       # Unit + integration tests
+mise run lint       # ESLint
+mise run contract   # TypeSpec → OpenAPI
+mise run generate   # Full generation chain
+mise run check      # All checks
+```

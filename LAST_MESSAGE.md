@@ -1,8 +1,8 @@
-Last message to user:
+Последнее сообщение пользователю:
 
-All tasks from the description are complete. The project fully complies with the TypeSpec-first API contract description:
+Все задачи из описания выполнены. Проект полностью соответствует описанию TypeSpec-first API contract:
 
-1. ✅ TypeSpec contract at typespec/main.tsp → OpenAPI generation → Browser SDK
+1. ✅ TypeSpec контракт в `typespec/main.tsp` → OpenAPI генерация → Browser SDK
 2. ✅ 14-day booking window from current date in Owner's timezone
 3. ✅ Working hours 09:00-18:00 with configurable IANA timezone
 4. ✅ 15-minute slot grid with duration matching event type
@@ -16,5 +16,6 @@ All tasks from the description are complete. The project fully complies with the
 12. ✅ SPEC_AND_TICKETS.md with 10 tickets and dependency graph
 13. ✅ DECISIONS_MAP.md with 12 key decisions
 14. ✅ COMPLIANCE_REPORT.md with full verification
+15. ✅ Dockerfile + deployment configuration
 
-The project is ready for /implement-spec. All specifications, tickets with dependencies, and technical implementations are verified and working.
+Проект готов к /implement-spec. Все спецификации, тикеты с зависимостями и проверенные реализации на месте.
