@@ -12,11 +12,11 @@ RUN npm install -g @typespec/compiler@1.18.0 @typespec/http@1.18.0
 
 # Copy package files and install dependencies
 COPY package*.json ./
-RUN npm install --production --silent
+RUN npm install --production
 
 # Copy TypeSpec source and generate OpenAPI
 COPY typespec/ ./typespec/
-RUN tsp compile ./typespec
+RUN npx tsp compile ./typespec
 
 # Copy source code and scripts
 COPY src/ ./src/
