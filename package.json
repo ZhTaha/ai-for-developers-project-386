@@ -19,7 +19,7 @@
   "author": "Talgat <talgatzhunis@gmail.com>",
   "license": "MIT",
   "devDependencies": {
-    "@playwright/test": "^1.55.0",
+    "@playwright/test": "^1.65.1",
     "@typespec/compiler": "1.18.0",
     "@typespec/http": "1.18.0",
     "@typespec/openapi3": "1.18.0",
