@@ -42,12 +42,22 @@ run = "eslint src test public"
 description = "Компиляция контракта typespec/main.tsp"
 run = "npx --no-install tsp compile ./typespec && echo 'OpenAPI схема: typespec/generated/openapi.json'"
 
+# TypeSpec → OpenAPI → браузерный SDK
+[tasks.generate]
+description = "Генерация OpenAPI и браузерного SDK"
+depends = ["contract"]
+run = "node scripts/generate-api-client.js"
+
 # Тесты (включая дымовой)
 [tasks.test]
-description = "Тесты на встроенном node --test"
-run = "node --test --test-force-exit"
+description = "API, unit и браузерные E2E-тесты"
+run = "node --test --test-force-exit test/calendar.test.js test/server.test.js && npx playwright test"
+
+[tasks.mutation]
+description = "Проверка, что тест обнаруживает нарушенное правило пересечения"
+run = "node scripts/verify-booking-rule.js"
 
 # Единая команда проверок: её же вызывает CI и git-хуки
 [tasks.check]
-description = "Все проверки: контракт, линтер, тесты"
-depends = ["contract", "lint", "test"]
+description = "Все проверки: контракт, SDK, линтер и тесты"
+depends = ["generate", "lint", "test", "mutation"]

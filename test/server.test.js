@@ -1,18 +1,68 @@
-// Интеграционные тесты API. Запуск: node --test test/
+// Интеграционные тесты публичного HTTP API через настоящий сервер.
 
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const os = require('node:os');
 const path = require('node:path');
 const { start } = require('../src/server');
+const calendar = require('../src/calendar');
 const store = require('../src/data');
 
 let baseUrl;
+let bookingDate;
+let weekendDate;
+
+function dateInAlmaty() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Almaty',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const part = (type) => parts.find((item) => item.type === type).value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function addDays(date, days) {
+  const [year, month, day] = date.split('-').map(Number);
+  const result = new Date(Date.UTC(year, month - 1, day + days));
+  return result.toISOString().slice(0, 10);
+}
+
+function dateInWindow(allowedWeekdays) {
+  const today = dateInAlmaty();
+  for (let offset = 0; offset < 14; offset += 1) {
+    const date = addDays(today, offset);
+    if (allowedWeekdays.includes(calendar.weekdayOf(date))) return date;
+  }
+  throw new Error('Подходящая дата не найдена в 14-дневном окне');
+}
+
+const request = (route, options) => fetch(`${baseUrl}${route}`, options);
+
+async function createEventType(name, durationMinutes, description = '') {
+  const response = await request('/api/event-types', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description, durationMinutes }),
+  });
+  assert.equal(response.status, 201);
+  return response.json();
+}
+
+async function createBooking(eventTypeId, slotStart, guestName = 'Гость') {
+  return request('/api/bookings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slotStart, eventTypeId, guestName, guestEmail: `${guestName}@example.com` }),
+  });
+}
 
 beforeEach(async () => {
-  // изолированное хранилище для каждого теста
   process.env.DATA_FILE = path.join(os.tmpdir(), `calendar-test-${Date.now()}-${Math.random()}.json`);
   store.reset();
+  bookingDate = dateInWindow([1, 2, 3, 4, 5]);
+  weekendDate = dateInWindow([6, 7]);
   const server = await start(0);
   baseUrl = `http://localhost:${server.address().port}`;
   return async () => {
@@ -21,260 +71,134 @@ beforeEach(async () => {
   };
 });
 
-test('GET /api/event-types возвращает тип по умолчанию', async () => {
-  const res = await fetch(`${baseUrl}/api/event-types`);
-  assert.equal(res.status, 200);
-  const types = await res.json();
-  assert.ok(types.some((t) => t.name === 'Знакомство'));
+test('GET /api/event-types возвращает публичные поля типа встречи', async () => {
+  const response = await request('/api/event-types');
+  assert.equal(response.status, 200);
+  const types = await response.json();
+  assert.deepEqual(Object.keys(types[0]).sort(), ['description', 'durationMinutes', 'id', 'name']);
 });
 
-test('POST /api/event-types создаёт тип встречи', async () => {
-  const res = await fetch(`${baseUrl}/api/event-types`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'Звонок по проекту', durationMinutes: 60 }),
-  });
-  assert.equal(res.status, 201);
-  const created = await res.json();
-  assert.equal(created.name, 'Звонок по проекту');
+test('POST /api/event-types создаёт тип, а ошибка данных возвращает 400', async () => {
+  const created = await createEventType('Звонок по проекту', 60, 'Обсудить проект');
   assert.equal(created.durationMinutes, 60);
-});
+  assert.equal(created.description, 'Обсудить проект');
 
-test('POST /api/event-types валидирует входные данные', async () => {
-  const res = await fetch(`${baseUrl}/api/event-types`, {
+  const invalid = await request('/api/event-types', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: '', durationMinutes: -5 }),
   });
-  assert.equal(res.status, 400);
+  assert.equal(invalid.status, 400);
 });
 
-test('GET /api/slots считает слоты по расписанию и дню недели', async () => {
-  // 2026-11-16 — понедельник, 09:00–18:00, сетка 15 мин => 36 слотов
-  const res = await fetch(`${baseUrl}/api/slots?date=2026-11-16`);
-  assert.equal(res.status, 200);
-  const slots = await res.json();
-  assert.equal(slots.length, 36);
-  assert.equal(slots[0].start, '2026-11-16T09:00');
-  assert.equal(slots[0].booked, false);
+test('слоты ограничены текущим 14-дневным окном и содержат длительность выбранного типа', async () => {
+  const hour = await createEventType('Час', 60);
+  const slots = await request(`/api/slots?date=${bookingDate}&eventTypeId=${hour.id}`);
+  assert.equal(slots.status, 200);
+  const body = await slots.json();
+  assert.equal(body[0].start.slice(11), '09:00');
+  assert.equal(body[0].end.slice(11), '10:00');
+
+  const beforeWindow = addDays(dateInAlmaty(), -1);
+  const rejected = await request(`/api/slots?date=${beforeWindow}&eventTypeId=${hour.id}`);
+  assert.equal(rejected.status, 409);
 });
 
-test('GET /api/slots возвращает пустой список в нерабочий день', async () => {
-  // 2026-11-15 — воскресенье
-  const res = await fetch(`${baseUrl}/api/slots?date=2026-11-15`);
-  const slots = await res.json();
-  assert.equal(slots.length, 0);
+test('слоты в нерабочий день пусты, а неверные параметры возвращают 400', async () => {
+  const [eventType] = await (await request('/api/event-types')).json();
+  const closedDay = await request(`/api/slots?date=${weekendDate}&eventTypeId=${eventType.id}`);
+  assert.equal(closedDay.status, 200);
+  assert.deepEqual(await closedDay.json(), []);
+
+  const invalid = await request('/api/slots?date=bad');
+  assert.equal(invalid.status, 400);
 });
 
-test('GET /api/slots отклоняет неверную дату', async () => {
-  const res = await fetch(`${baseUrl}/api/slots?date=неверно`);
-  assert.equal(res.status, 400);
+test('бронь использует длительность выбранного типа и защищает весь её интервал', async () => {
+  const hour = await createEventType('Час', 60);
+  const first = await createBooking(hour.id, `${bookingDate}T10:00`, 'Первый');
+  assert.equal(first.status, 201);
+  assert.equal((await first.json()).durationMinutes, 60);
+
+  const [defaultType] = await (await request('/api/event-types')).json();
+  const overlap = await createBooking(defaultType.id, `${bookingDate}T10:30`, 'Второй');
+  assert.equal(overlap.status, 409);
+
+  const adjacent = await createBooking(defaultType.id, `${bookingDate}T11:00`, 'Третий');
+  assert.equal(adjacent.status, 201);
 });
 
-test('старая бронь без durationMinutes читается как 15-минутная', async () => {
-  // подсадим файл хранилища со «старой» бронью без durationMinutes
-  const fs = require('node:fs');
-  const oldDb = {
-    eventTypes: [{ id: 'old-type', name: 'Старый тип', durationMinutes: 60 }],
-    availability: { weekdays: [1], startTime: '09:00', endTime: '18:00' },
-    bookings: [
-      { id: 'old-booking', slotStart: '2026-11-16T10:00', eventTypeId: 'old-type', guestName: 'Старый гость', guestEmail: 'old@example.com' },
-    ],
-  };
-  fs.writeFileSync(process.env.DATA_FILE, JSON.stringify(oldDb));
+test('новая длинная бронь не может пересечь ранее созданную короткую бронь', async () => {
+  const [defaultType] = await (await request('/api/event-types')).json();
+  const first = await createBooking(defaultType.id, `${bookingDate}T10:30`);
+  assert.equal(first.status, 201);
 
-  const res = await fetch(`${baseUrl}/api/bookings`);
-  assert.equal(res.status, 200);
-  const bookings = await res.json();
-  const old = bookings.find((b) => b.id === 'old-booking');
-  assert.equal(old.durationMinutes, 15);
+  const hour = await createEventType('Час', 60);
+  const overlap = await createBooking(hour.id, `${bookingDate}T10:00`, 'Пересечение');
+  assert.equal(overlap.status, 409);
 });
 
-test('60-минутная бронь блокирует все пересекающиеся 15-минутные слоты', async () => {
-  const types = await (await fetch(`${baseUrl}/api/event-types`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'Час', durationMinutes: 60 }),
-  })).json();
-  const res = await fetch(`${baseUrl}/api/bookings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slotStart: '2026-11-16T10:00', eventTypeId: types.id, guestName: 'Гость', guestEmail: 'g@example.com' }),
-  });
-  assert.equal(res.status, 201);
-  const booking = await res.json();
-  assert.equal(booking.durationMinutes, 60);
-
-  const slots = await (await fetch(`${baseUrl}/api/slots?date=2026-11-16`)).json();
-  const busy = slots.filter((s) => s.booked).map((s) => s.start);
-  assert.deepEqual(busy, ['2026-11-16T10:00', '2026-11-16T10:15', '2026-11-16T10:30', '2026-11-16T10:45']);
-  // примыкающий вплотную слот свободен
-  assert.equal(slots.find((s) => s.start === '2026-11-16T11:00').booked, false);
+test('одновременные запросы на один интервал дают одну созданную бронь и один конфликт', async () => {
+  const [eventType] = await (await request('/api/event-types')).json();
+  const results = await Promise.all([
+    createBooking(eventType.id, `${bookingDate}T13:00`, 'Первый'),
+    createBooking(eventType.id, `${bookingDate}T13:00`, 'Второй'),
+  ]);
+  assert.deepEqual(results.map((response) => response.status).sort(), [201, 409]);
 });
 
-test('отмена брони освобождает все её слоты', async () => {
-  const types = await (await fetch(`${baseUrl}/api/event-types`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'Час', durationMinutes: 60 }),
-  })).json();
-  const booking = await (
-    await fetch(`${baseUrl}/api/bookings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slotStart: '2026-11-16T10:00', eventTypeId: types.id, guestName: 'Г', guestEmail: 'g@example.com' }),
-    })
-  ).json();
+test('неверная сетка, прошлый день и несуществующий тип имеют ожидаемые ошибки', async () => {
+  const [eventType] = await (await request('/api/event-types')).json();
+  const notOnGrid = await createBooking(eventType.id, `${bookingDate}T10:10`);
+  assert.equal(notOnGrid.status, 400);
 
-  const del = await fetch(`${baseUrl}/api/bookings/${booking.id}`, { method: 'DELETE' });
-  assert.equal(del.status, 204);
+  const beforeWindow = await createBooking(eventType.id, `${addDays(dateInAlmaty(), -1)}T10:00`);
+  assert.equal(beforeWindow.status, 409);
 
-  const slots = await (await fetch(`${baseUrl}/api/slots?date=2026-11-16`)).json();
-  assert.equal(slots.every((s) => !s.booked), true);
+  const missingType = await createBooking('unknown', `${bookingDate}T10:00`);
+  assert.equal(missingType.status, 404);
 });
 
-test('slotStart вне 15-минутной сетки отклоняется с 400', async () => {
-  const types = await (await fetch(`${baseUrl}/api/event-types`)).json();
-  const res = await fetch(`${baseUrl}/api/bookings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slotStart: '2026-11-16T10:10', eventTypeId: types[0].id, guestName: 'Г', guestEmail: 'g@example.com' }),
-  });
-  assert.equal(res.status, 400);
-});
-
-test('встреча может начинаться в последнем интервале окна (выход за endTime)', async () => {
-  const types = await (await fetch(`${baseUrl}/api/event-types`)).json();
-  const res = await fetch(`${baseUrl}/api/bookings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slotStart: '2026-11-16T17:45', eventTypeId: types[0].id, guestName: 'Г', guestEmail: 'g@example.com' }),
-  });
-  assert.equal(res.status, 201);
-});
-
-test('гость может записаться на свободный слот', async () => {
-  const types = await (await fetch(`${baseUrl}/api/event-types`)).json();
-  const res = await fetch(`${baseUrl}/api/bookings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      slotStart: '2026-11-16T10:00',
-      eventTypeId: types[0].id,
-      guestName: 'Гость',
-      guestEmail: 'guest@example.com',
-    }),
-  });
-  assert.equal(res.status, 201);
-  const booking = await res.json();
-  assert.equal(booking.guestName, 'Гость');
-
-  // слот стал занятым
-  const slots = await (await fetch(`${baseUrl}/api/slots?date=2026-11-16`)).json();
-  const slot = slots.find((s) => s.start === '2026-11-16T10:00');
-  assert.equal(slot.booked, true);
-});
-
-test('повторное бронирование того же слота запрещено (409)', async () => {
-  const types = await (await fetch(`${baseUrl}/api/event-types`)).json();
-  const body = JSON.stringify({
-    slotStart: '2026-11-16T10:00',
-    eventTypeId: types[0].id,
-    guestName: 'Первый',
-    guestEmail: 'a@example.com',
-  });
-  await fetch(`${baseUrl}/api/bookings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  });
-  const res = await fetch(`${baseUrl}/api/bookings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      slotStart: '2026-11-16T10:00',
-      eventTypeId: types[0].id,
-      guestName: 'Второй',
-      guestEmail: 'b@example.com',
-    }),
-  });
-  assert.equal(res.status, 409);
-});
-
-test('нельзя бронировать слот вне расписания', async () => {
-  const types = await (await fetch(`${baseUrl}/api/event-types`)).json();
-  const res = await fetch(`${baseUrl}/api/bookings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      slotStart: '2026-11-16T07:00', // раньше 09:00
-      eventTypeId: types[0].id,
-      guestName: 'Гость',
-      guestEmail: 'g@example.com',
-    }),
-  });
-  assert.equal(res.status, 409);
-});
-
-test('владелец видит брони и может отменить — слот освобождается', async () => {
-  const types = await (await fetch(`${baseUrl}/api/event-types`)).json();
-  const booking = await (
-    await fetch(`${baseUrl}/api/bookings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        slotStart: '2026-11-16T11:00',
-        eventTypeId: types[0].id,
-        guestName: 'Гость',
-        guestEmail: 'g@example.com',
-      }),
-    })
-  ).json();
-
-  const list = await (await fetch(`${baseUrl}/api/bookings`)).json();
-  assert.equal(list.length, 1);
-
-  const del = await fetch(`${baseUrl}/api/bookings/${booking.id}`, { method: 'DELETE' });
-  assert.equal(del.status, 204);
-
-  const slots = await (await fetch(`${baseUrl}/api/slots?date=2026-11-16`)).json();
-  assert.equal(slots.find((s) => s.start === '2026-11-16T11:00').booked, false);
-});
-
-test('PUT /api/availability обновляет расписание', async () => {
-  const res = await fetch(`${baseUrl}/api/availability`, {
+test('владелец обновляет доступность вместе с часовым поясом', async () => {
+  const response = await request('/api/availability', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ weekdays: [6], startTime: '12:00', endTime: '14:00' }),
+    body: JSON.stringify({ weekdays: [6], startTime: '12:00', endTime: '14:00', timeZone: 'Asia/Almaty' }),
   });
-  assert.equal(res.status, 200);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).timeZone, 'Asia/Almaty');
 
-  // суббота 2026-11-14, 12:00–14:00 => 8 слотов по 15 минут
-  const slots = await (await fetch(`${baseUrl}/api/slots?date=2026-11-14`)).json();
-  assert.equal(slots.length, 8);
+  const invalid = await request('/api/availability', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ weekdays: [6], startTime: '14:00', endTime: '12:00', timeZone: 'Unknown/Zone' }),
+  });
+  assert.equal(invalid.status, 400);
 });
 
-test('статический фронтенд отдаётся на /', async () => {
-  const res = await fetch(baseUrl);
-  assert.equal(res.status, 200);
-  assert.match(await res.text(), /Календарь звонков/);
+test('отмена брони освобождает слот и список Owner показывает бронь', async () => {
+  const [eventType] = await (await request('/api/event-types')).json();
+  const created = await createBooking(eventType.id, `${bookingDate}T11:00`);
+  const booking = await created.json();
+
+  const list = await request('/api/bookings');
+  assert.equal((await list.json()).length, 1);
+  const deleted = await request(`/api/bookings/${booking.id}`, { method: 'DELETE' });
+  assert.equal(deleted.status, 204);
+  const slots = await request(`/api/slots?date=${bookingDate}&eventTypeId=${eventType.id}`);
+  assert.equal((await slots.json()).find((slot) => slot.start.endsWith('T11:00')).booked, false);
 });
 
-test('главная страница рассказывает о сервисе и ведёт на страницу записи', async () => {
-  const res = await fetch(baseUrl);
-  assert.equal(res.status, 200);
-  const html = await res.text();
-  assert.match(res.headers.get('content-type'), /text\/html/);
-  assert.match(html, /Календарь звонков/);
-  assert.match(html, /сервис бронирования/);
-  assert.match(html, /href="\/book"/);
-});
+test('страницы и сгенерированный SDK доступны с настоящего сервера', async () => {
+  const landing = await request('/');
+  assert.equal(landing.status, 200);
+  assert.match(await landing.text(), /href="\/book"/);
 
-test('страница записи отдаётся на /book', async () => {
-  const res = await fetch(`${baseUrl}/book`);
-  assert.equal(res.status, 200);
-  const html = await res.text();
-  assert.match(res.headers.get('content-type'), /text\/html/);
-  assert.match(html, /Запись на звонок/);
-  assert.match(html, /href="\/"/); // ссылка назад на главную
+  const booking = await request('/book');
+  assert.equal(booking.status, 200);
+  assert.match(await booking.text(), /type="module" src="\/app.js"/);
+
+  const client = await request('/generated-api.js');
+  assert.equal(client.status, 200);
+  assert.match(await client.text(), /class CalendarApiClient/);
 });

@@ -1,88 +1,133 @@
-// API-контракт «Календаря звонков» (Design First)
-// Схема описывает REST API, реализуемый в src/server.js.
-// Компиляция и генерация клиента: npx @typespec/compiler compile ./typespec
+// Публичный контракт API «Календаря звонков».
+// Окно записи: текущий день и следующие 13 календарных дней в часовом поясе Owner.
 
 import "@typespec/http";
-import "@typespec/rest";
 
-using Http;
-using Rest;
+using TypeSpec.Http;
 
-/** Тип встречи, созданный владельцем */
+@service(#{ title: "Calendar API" })
+@route("/api")
+namespace CalendarApi;
+
+/** Тип встречи, созданный Owner. */
 model EventType {
-  /** Идентификатор */
   id: string;
-  /** Название, например «Звонок по проекту» */
   name: string;
-  /** Описание встречи */
-  description?: string;
-  /** Длительность в минутах: 15 | 30 | 60 */
+  description: string;
+  /** Длительность встречи в минутах. */
   durationMinutes: int32;
 }
 
-/** Расписание доступности владельца */
-model Availability {
-  /** Дни недели (1 = понедельник ... 7 = воскресенье) */
-  weekdays: int32[];
-  /** Начало рабочего дня, «HH:MM» */
-  startTime: string;
-  /** Конец рабочего дня, «HH:MM» */
-  endTime: string;
+model CreateEventType {
+  name: string;
+  description?: string;
+  durationMinutes: int32;
 }
 
-/** Бронь на слот */
+/** Рабочие часы Owner в указанном IANA-часовом поясе. */
+model Availability {
+  /** Дни недели: 1 = понедельник, 7 = воскресенье. */
+  weekdays: int32[];
+  startTime: string;
+  endTime: string;
+  /** IANA-идентификатор, например Asia/Almaty. */
+  timeZone: string;
+}
+
+/** Бронь Guest. Интервал: [slotStart, slotStart + durationMinutes). */
 model Booking {
   id: string;
-  /** ISO-начало слота на 15-минутной сетке: «2026-11-20T10:00», «2026-11-20T10:15» */
+  /** Локальное время Owner в его timeZone, начало на 15-минутной сетке. */
   slotStart: string;
-  /** Длительность встречи в минутах, на момент бронирования */
   durationMinutes: int32;
   eventTypeId: string;
   guestName: string;
   guestEmail: string;
-  comment?: string;
+  comment: string;
 }
 
-/** Свободный или занятый слот на дату */
+/** Старт, который доступен или занят для выбранного EventType. */
 model Slot {
   start: string;
   end: string;
   booked: boolean;
 }
 
-@route("/api")
-namespace CalendarApi {
-  @route("event-types")
-  interface EventTypes {
-    /** Список типов встреч */
-    @get list(): EventType[];
-    /** Создать тип встречи */
-    @post create(@body body: { name: string; description?: string; durationMinutes: int32; }): EventType;
-    /** Удалить тип встречи */
-    @delete remove(@path id: string): void;
-  }
+model CreateBooking {
+  slotStart: string;
+  eventTypeId: string;
+  guestName: string;
+  guestEmail: string;
+  comment?: string;
+}
 
-  @route("availability")
-  interface AvailabilityApi {
-    /** Текущее расписание доступности */
-    @get get(): Availability;
-    /** Обновить расписание доступности */
-    @put update(@body body: Availability): Availability;
-  }
+model ErrorBody {
+  error: string;
+}
 
-  @route("slots")
-  interface Slots {
-    /** Свободные/занятые слоты на дату YYYY-MM-DD */
-    @get list(@query date: string): Slot[];
-  }
+model BadRequest {
+  @statusCode statusCode: 400;
+  @body body: ErrorBody;
+}
 
-  @route("bookings")
-  interface Bookings {
-    /** Все брони (для владельца) */
-    @get list(): Booking[];
-    /** Записаться на свободный слот (гость); slotStart — на 15-минутной сетке; длительность берётся из типа встречи */
-    @post create(@body body: { slotStart: string; eventTypeId: string; guestName: string; guestEmail: string; comment?: string; }): Booking;
-    /** Отменить бронь — слот освобождается */
-    @delete remove(@path id: string): void;
-  }
+model NotFound {
+  @statusCode statusCode: 404;
+  @body body: ErrorBody;
+}
+
+/** Некорректное окно бронирования или пересечение с существующей бронью. */
+model Conflict {
+  @statusCode statusCode: 409;
+  @body body: ErrorBody;
+}
+
+model NoContent {
+  @statusCode statusCode: 204;
+}
+
+@route("/event-types")
+interface EventTypes {
+  @get list(): EventType[];
+
+  @post create(@body body: CreateEventType): {
+    @statusCode statusCode: 201;
+    @body body: EventType;
+  } | BadRequest;
+
+  @delete
+  @route("/{id}")
+  remove(@path id: string): NoContent | NotFound;
+}
+
+@route("/availability")
+interface AvailabilityApi {
+  @get get(): Availability;
+
+  @put update(@body body: Availability): Availability | BadRequest;
+}
+
+@route("/slots")
+interface Slots {
+  /**
+   * Список 15-минутных стартов на дату для выбранного типа встречи.
+   * Старт должен попадать в 14-дневное окно и рабочие часы; последняя встреча
+   * может закончиться после endTime.
+   */
+  @get list(@query date: string, @query eventTypeId: string): Slot[] | BadRequest | NotFound | Conflict;
+}
+
+@route("/bookings")
+interface Bookings {
+  /** Все брони Owner. */
+  @get list(): Booking[];
+
+  /** Создать бронь Guest на свободный интервал выбранного типа встречи. */
+  @post create(@body body: CreateBooking): {
+    @statusCode statusCode: 201;
+    @body body: Booking;
+  } | BadRequest | NotFound | Conflict;
+
+  @delete
+  @route("/{id}")
+  remove(@path id: string): NoContent | NotFound;
 }

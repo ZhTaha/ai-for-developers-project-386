@@ -17,7 +17,7 @@ const defaults = {
       durationMinutes: 30,
     },
   ],
-  availability: { weekdays: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '18:00' },
+  availability: { weekdays: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '18:00', timeZone: 'Asia/Almaty' },
   bookings: [],
 };
 
@@ -31,11 +31,20 @@ function normalizeBooking(b) {
   return ok ? b : { ...b, durationMinutes: DEFAULT_BOOKING_MINUTES };
 }
 
+function normalizeAvailability(availability) {
+  return { ...defaults.availability, ...(availability || {}) };
+}
+
 function load() {
   if (cache) return cache;
   try {
     const parsed = JSON.parse(fs.readFileSync(dataFile(), 'utf8'));
-    cache = { ...defaults, ...parsed, bookings: (parsed.bookings || defaults.bookings).map(normalizeBooking) };
+    cache = {
+      ...defaults,
+      ...parsed,
+      availability: normalizeAvailability(parsed.availability),
+      bookings: (parsed.bookings || defaults.bookings).map(normalizeBooking),
+    };
   } catch {
     cache = structuredClone(defaults);
     cache.bookings = cache.bookings.map(normalizeBooking);

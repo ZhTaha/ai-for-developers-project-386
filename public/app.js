@@ -1,158 +1,176 @@
-const api = (path, options = {}) =>
-  fetch(`/api${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  }).then(async (r) => {
-    if (r.status === 204) return null;
-    const body = await r.json();
-    if (!r.ok) throw new Error(body.error || r.statusText);
-    return body;
-  });
+import { CalendarApiClient } from './generated-api.js';
 
-const $ = (sel) => document.querySelector(sel);
+const client = new CalendarApiClient();
+const $ = (selector) => document.querySelector(selector);
 
 let selectedSlot = null;
 let eventTypes = [];
 
-// ---- вкладки ----
 function showTab(tab) {
   $('#view-guest').hidden = tab !== 'guest';
   $('#view-admin').hidden = tab !== 'admin';
   $('#tab-guest').classList.toggle('active', tab === 'guest');
   $('#tab-admin').classList.toggle('active', tab === 'admin');
 }
+
 $('#tab-guest').onclick = () => showTab('guest');
 $('#tab-admin').onclick = () => showTab('admin');
 
-// ---- типы встреч ----
+function dateInTimeZone(timeZone) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type) => parts.find((part) => part.type === type).value;
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
+
+function addDays(date, days) {
+  const [year, month, day] = date.split('-').map(Number);
+  const result = new Date(Date.UTC(year, month - 1, day + days));
+  return result.toISOString().slice(0, 10);
+}
+
 async function loadEventTypes() {
-  eventTypes = await api('/event-types');
+  eventTypes = await client.listEventTypes();
   $('#guest-event-type').innerHTML = eventTypes
-    .map((t) => `<option value="${t.id}">${t.name} (${t.durationMinutes} мин)</option>`)
+    .map((type) => `<option value="${type.id}">${type.name} — ${type.description} (${type.durationMinutes} мин)</option>`)
     .join('');
   $('#event-type-list').innerHTML = eventTypes
-    .map((t) => `<li>${t.name} — ${t.durationMinutes} мин <button data-del="${t.id}">✕</button></li>`)
+    .map((type) => `<li>${type.name} — ${type.description} — ${type.durationMinutes} мин <button data-del="${type.id}">✕</button></li>`)
     .join('');
 }
 
-$('#event-type-form').onsubmit = async (e) => {
-  e.preventDefault();
-  await api('/event-types', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: $('#et-name').value,
-      description: $('#et-description').value,
-      durationMinutes: Number($('#et-duration').value),
-    }),
+$('#event-type-form').onsubmit = async (event) => {
+  event.preventDefault();
+  await client.createEventType({
+    name: $('#et-name').value,
+    description: $('#et-description').value,
+    durationMinutes: Number($('#et-duration').value),
   });
   $('#et-name').value = '';
   $('#et-description').value = '';
-  loadEventTypes();
+  await loadEventTypes();
+  await loadSlots();
 };
 
-$('#event-type-list').onclick = async (e) => {
-  const id = e.target.dataset.del;
+$('#event-type-list').onclick = async (event) => {
+  const id = event.target.dataset.del;
   if (id) {
-    await api(`/event-types/${id}`, { method: 'DELETE' });
-    loadEventTypes();
+    await client.deleteEventType(id);
+    await loadEventTypes();
+    await loadSlots();
   }
 };
 
-// ---- расписание ----
 async function loadAvailability() {
-  const av = await api('/availability');
-  document.querySelectorAll('#weekday-checks input').forEach((c) => {
-    c.checked = av.weekdays.includes(Number(c.value));
+  const availability = await client.getAvailability();
+  document.querySelectorAll('#weekday-checks input').forEach((checkbox) => {
+    checkbox.checked = availability.weekdays.includes(Number(checkbox.value));
   });
-  $('#av-start').value = av.startTime;
-  $('#av-end').value = av.endTime;
+  $('#av-start').value = availability.startTime;
+  $('#av-end').value = availability.endTime;
+  $('#av-time-zone').value = availability.timeZone;
+
+  const min = dateInTimeZone(availability.timeZone);
+  const max = addDays(min, 13);
+  $('#guest-date').min = min;
+  $('#guest-date').max = max;
+  if (!$('#guest-date').value || $('#guest-date').value < min || $('#guest-date').value > max) {
+    $('#guest-date').value = min;
+  }
 }
 
-$('#availability-form').onsubmit = async (e) => {
-  e.preventDefault();
-  const weekdays = [...document.querySelectorAll('#weekday-checks input:checked')].map((c) => Number(c.value));
-  await api('/availability', {
-    method: 'PUT',
-    body: JSON.stringify({ weekdays, startTime: $('#av-start').value, endTime: $('#av-end').value }),
+$('#availability-form').onsubmit = async (event) => {
+  event.preventDefault();
+  const weekdays = [...document.querySelectorAll('#weekday-checks input:checked')].map((checkbox) => Number(checkbox.value));
+  await client.updateAvailability({
+    weekdays,
+    startTime: $('#av-start').value,
+    endTime: $('#av-end').value,
+    timeZone: $('#av-time-zone').value,
   });
+  await loadAvailability();
+  await loadSlots();
 };
 
-// ---- слоты (гость) ----
 $('#guest-date').onchange = loadSlots;
+$('#guest-event-type').onchange = loadSlots;
 
 async function loadSlots() {
   const date = $('#guest-date').value;
-  if (!date) return;
-  const slots = await api(`/slots?date=${date}`);
-  $('#guest-slots').innerHTML = slots.length
-    ? slots
-        .map((s) => {
-          const label = s.start.slice(11, 16);
-          return `<button class="slot ${s.booked ? 'booked' : ''}" ${s.booked ? 'disabled' : ''} data-start="${s.start}">${label}</button>`;
-        })
-        .join('')
-    : '<p>Нет слотов на этот день</p>';
-  $('#guest-form').hidden = true;
-  $('#guest-result').textContent = '';
+  const eventTypeId = $('#guest-event-type').value;
+  if (!date || !eventTypeId) return;
+  try {
+    const slots = await client.listSlots(date, eventTypeId);
+    $('#guest-slots').innerHTML = slots.length
+      ? slots
+          .map((slot) => {
+            const label = `${slot.start.slice(11, 16)}–${slot.end.slice(11, 16)}`;
+            return `<button class="slot ${slot.booked ? 'booked' : ''}" ${slot.booked ? 'disabled' : ''} data-start="${slot.start}">${label}</button>`;
+          })
+          .join('')
+      : '<p>Нет слотов на этот день</p>';
+    $('#guest-form').hidden = true;
+    $('#guest-result').textContent = '';
+  } catch (error) {
+    $('#guest-slots').innerHTML = '';
+    $('#guest-result').textContent = `❌ ${error.message}`;
+  }
 }
 
-$('#guest-slots').onclick = (e) => {
-  if (!e.target.dataset.start) return;
-  selectedSlot = e.target.dataset.start;
-  document.querySelectorAll('#guest-slots .slot').forEach((b) => b.classList.remove('selected'));
-  e.target.classList.add('selected');
+$('#guest-slots').onclick = (event) => {
+  if (!event.target.dataset.start) return;
+  selectedSlot = event.target.dataset.start;
+  document.querySelectorAll('#guest-slots .slot').forEach((button) => button.classList.remove('selected'));
+  event.target.classList.add('selected');
   $('#guest-form').hidden = false;
 };
 
-$('#guest-form').onsubmit = async (e) => {
-  e.preventDefault();
+$('#guest-form').onsubmit = async (event) => {
+  event.preventDefault();
   try {
-    await api('/bookings', {
-      method: 'POST',
-      body: JSON.stringify({
-        slotStart: selectedSlot,
-        eventTypeId: $('#guest-event-type').value,
-        guestName: $('#guest-name').value,
-        guestEmail: $('#guest-email').value,
-        comment: $('#guest-comment').value,
-      }),
+    await client.createBooking({
+      slotStart: selectedSlot,
+      eventTypeId: $('#guest-event-type').value,
+      guestName: $('#guest-name').value,
+      guestEmail: $('#guest-email').value,
+      comment: $('#guest-comment').value,
     });
-    $('#guest-result').textContent = `✅ Записан на ${selectedSlot.replace('T', ' ')}`;
     $('#guest-form').hidden = true;
-    loadSlots();
-  } catch (err) {
-    $('#guest-result').textContent = `❌ ${err.message}`;
+    await Promise.all([loadSlots(), loadBookings()]);
+    $('#guest-result').textContent = `✅ Записан на ${selectedSlot.replace('T', ' ')}`;
+  } catch (error) {
+    $('#guest-result').textContent = `❌ ${error.message}`;
   }
 };
 
-// ---- брони (владелец) ----
 async function loadBookings() {
-  const [bookings] = await Promise.all([api('/bookings')]);
+  const bookings = await client.listBookings();
   $('#booking-list').innerHTML = bookings.length
     ? bookings
-        .map((b) => {
-          const type = eventTypes.find((t) => t.id === b.eventTypeId);
-          return `<li>${b.slotStart.replace('T', ' ')} — ${type ? type.name : ''} — ${b.guestName} (${b.guestEmail})
-            <button data-cancel="${b.id}">Отменить</button></li>`;
+        .map((booking) => {
+          const type = eventTypes.find((eventType) => eventType.id === booking.eventTypeId);
+          return `<li>${booking.slotStart.replace('T', ' ')} — ${type ? type.name : ''} — ${booking.guestName} (${booking.guestEmail}) <button data-cancel="${booking.id}">Отменить</button></li>`;
         })
         .join('')
     : '<li>Броней пока нет</li>';
 }
 
-$('#booking-list').onclick = async (e) => {
-  const id = e.target.dataset.cancel;
+$('#booking-list').onclick = async (event) => {
+  const id = event.target.dataset.cancel;
   if (id) {
-    await api(`/bookings/${id}`, { method: 'DELETE' });
-    loadBookings();
+    await client.deleteBooking(id);
+    await Promise.all([loadBookings(), loadSlots()]);
   }
 };
 
-function init() {
-  $('#guest-date').valueAsDate = new Date();
-  loadEventTypes();
-  loadAvailability();
-  loadSlots();
-  loadBookings();
+async function init() {
+  await loadAvailability();
+  await loadEventTypes();
+  await Promise.all([loadSlots(), loadBookings()]);
 }
 
 init();

@@ -82,12 +82,13 @@ async function handleApi(req, res, url) {
     if (req.method === 'GET') return json(res, 200, db.availability);
     if (req.method === 'PUT') {
       const body = await readBody(req);
-      const { weekdays, startTime, endTime } = body;
+      const { weekdays, startTime, endTime, timeZone } = body;
       const validDays = Array.isArray(weekdays) && weekdays.every((d) => d >= 1 && d <= 7);
-      if (!validDays || !/^\d{2}:\d{2}$/.test(startTime || '') || !/^\d{2}:\d{2}$/.test(endTime || '')) {
-        return json(res, 400, { error: 'weekdays 1..7, startTime и endTime в формате HH:MM' });
+      const validTimes = /^\d{2}:\d{2}$/.test(startTime || '') && /^\d{2}:\d{2}$/.test(endTime || '') && startTime < endTime;
+      if (!validDays || !validTimes || !calendar.isValidTimeZone(timeZone)) {
+        return json(res, 400, { error: 'weekdays 1..7, startTime < endTime в формате HH:MM и корректный IANA timeZone обязательны' });
       }
-      db.availability = { weekdays, startTime, endTime };
+      db.availability = { weekdays, startTime, endTime, timeZone };
       store.save();
       return json(res, 200, db.availability);
     }
@@ -96,10 +97,16 @@ async function handleApi(req, res, url) {
   // GET /api/slots?date=YYYY-MM-DD
   if (req.method === 'GET' && pathname === '/api/slots') {
     const date = url.searchParams.get('date');
-    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return json(res, 400, { error: 'нужен параметр date=YYYY-MM-DD' });
+    const eventTypeId = url.searchParams.get('eventTypeId');
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !eventTypeId) {
+      return json(res, 400, { error: 'нужны параметры date=YYYY-MM-DD и eventTypeId' });
     }
-    const slots = calendar.slotsForDate(db.availability, date, db.bookings, db.eventTypes, SLOT_MINUTES);
+    const eventType = db.eventTypes.find((type) => type.id === eventTypeId);
+    if (!eventType) return json(res, 404, { error: 'тип встречи не найден' });
+    if (!calendar.isDateWithinBookingWindow(date, db.availability.timeZone)) {
+      return json(res, 409, { error: 'дата вне 14-дневного окна записи' });
+    }
+    const slots = calendar.slotsForDate(db.availability, date, db.bookings, eventType.durationMinutes, SLOT_MINUTES);
     return json(res, 200, slots);
   }
 
@@ -123,8 +130,8 @@ async function handleApi(req, res, url) {
     if (!calendar.isOnGrid(slotStart, SLOT_MINUTES)) {
       return json(res, 400, { error: 'slotStart должен быть на 15-минутной сетке' });
     }
-    if (!calendar.isSlotBookable(db.availability, slotStart, db.bookings, SLOT_MINUTES)) {
-      return json(res, 409, { error: 'слот занят или вне расписания' });
+    if (!calendar.isSlotBookable(db.availability, slotStart, eventType.durationMinutes, db.bookings, SLOT_MINUTES)) {
+      return json(res, 409, { error: 'слот занят, вне расписания или вне 14-дневного окна записи' });
     }
     const booking = { id: uuid(), slotStart, eventTypeId, guestName, guestEmail, comment: comment || '', durationMinutes: eventType.durationMinutes };
     db.bookings.push(booking);

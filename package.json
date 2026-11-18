@@ -6,8 +6,11 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test --test-force-exit",
+    "test": "node --test --test-force-exit test/calendar.test.js test/server.test.js && playwright test",
     "lint": "eslint src test public",
+    "contract": "tsp compile ./typespec",
+    "generate": "npm run contract && node scripts/generate-api-client.js",
+    "test:mutation": "node scripts/verify-booking-rule.js",
     "check": "mise run check"
   },
   "engines": {
@@ -16,6 +19,7 @@
   "author": "Talgat <talgatzhunis@gmail.com>",
   "license": "MIT",
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@typespec/compiler": "1.18.0",
     "@typespec/http": "1.18.0",
     "@typespec/openapi3": "1.18.0",

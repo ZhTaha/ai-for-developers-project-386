@@ -1,4 +1,4 @@
-// ESLint flat config: CommonJS-бекенд, тесты и браузерный скрипт фронтенда.
+// ESLint flat config: CommonJS-бекенд/тесты и ESM-фронтенд со сгенерированным SDK.
 const { defineConfig, globalIgnores } = require('eslint/config');
 const globals = require('globals');
 
@@ -21,7 +21,7 @@ module.exports = defineConfig([
     files: ['public/**/*.js'],
     languageOptions: {
       ecmaVersion: 2024,
-      sourceType: 'script',
+      sourceType: 'module',
       globals: { ...globals.browser },
     },
     rules: {

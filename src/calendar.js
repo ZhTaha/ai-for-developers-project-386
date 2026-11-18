@@ -2,6 +2,7 @@
 // Чистые функции — легко тестируются отдельно от сервера.
 
 const DEFAULT_SLOT_MINUTES = 15;
+const BOOKING_WINDOW_DAYS = 14;
 
 /** Минуты от полуночи до начала брони (для slotStart «YYYY-MM-DDTHH:MM») */
 function bookingMinutes(b) {
@@ -57,6 +58,47 @@ function utcDateToSlot(d) {
   return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}T${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
 }
 
+/** Возвращает YYYY-MM-DD для момента now в IANA-часовом поясе владельца. */
+function dateInTimeZone(timeZone, now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const get = (type) => parts.find((part) => part.type === type).value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function isValidTimeZone(timeZone) {
+  try {
+    dateInTimeZone(timeZone);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function addDays(date, days) {
+  const [year, month, day] = date.split('-').map(Number);
+  const result = new Date(Date.UTC(year, month - 1, day + days));
+  return `${result.getUTCFullYear()}-${pad2(result.getUTCMonth() + 1)}-${pad2(result.getUTCDate())}`;
+}
+
+/**
+ * Окно начинается сегодня в часовом поясе Owner и включает 14 календарных дней.
+ */
+function bookingWindow(timeZone, now = new Date(), days = BOOKING_WINDOW_DAYS) {
+  const start = dateInTimeZone(timeZone, now);
+  return { start, end: addDays(start, days - 1) };
+}
+
+function isDateWithinBookingWindow(date, timeZone, now = new Date()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !isValidTimeZone(timeZone)) return false;
+  const { start, end } = bookingWindow(timeZone, now);
+  return date >= start && date <= end;
+}
+
 /** ISO дата «YYYY-MM-DD» -> день недели ISO (1 = понедельник ... 7 = воскресенье) */
 function weekdayOf(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -69,11 +111,11 @@ function weekdayOf(dateStr) {
  * @param {object} availability { weekdays: number[], startTime, endTime }
  * @param {string} date «YYYY-MM-DD»
  * @param {Array<{slotStart: string, durationMinutes?: number}>} bookings занятые интервалы
- * @param {Array<{id: string, durationMinutes: number}>} eventTypes типы встреч
+ * @param {number} durationMinutes длительность выбранного типа встречи
  * @param {number} [slotMinutes] шаг сетки (по умолчанию 15)
  * @returns {Array<{start: string, end: string, booked: boolean}>}
  */
-function slotsForDate(availability, date, bookings, eventTypes, slotMinutes = DEFAULT_SLOT_MINUTES) {
+function slotsForDate(availability, date, bookings, durationMinutes, slotMinutes = DEFAULT_SLOT_MINUTES) {
   const weekday = weekdayOf(date);
   if (!availability.weekdays.includes(weekday)) return [];
 
@@ -86,35 +128,37 @@ function slotsForDate(availability, date, bookings, eventTypes, slotMinutes = DE
   const slots = [];
   for (let t = startMin; t < endMin; t += slotMinutes) {
     const time = minutesToHHMM(t);
-    // последняя встреча дня может выходить за endTime — конец слота не обрезаем жёстко
-    const end = minutesToHHMM(t + slotMinutes);
+    // последняя встреча дня может выходить за endTime — конец встречи не обрезаем.
+    const end = minutesToHHMM(t + durationMinutes);
     slots.push({
       start: `${date}T${time}`,
       end: `${date}T${end}`,
-      booked: intervals.some((iv) => overlaps(t, slotMinutes, iv.start, iv.duration)),
+      booked: intervals.some((iv) => overlaps(t, durationMinutes, iv.start, iv.duration)),
     });
   }
   return slots;
 }
 
 /**
- * Проверка, что slotStart бронируем: на сетке, внутри окна доступности и без пересечения с бронями.
+ * Проверка, что slotStart бронируем: в 14-дневном окне, на сетке, внутри
+ * доступности и без пересечения с бронями на всю длительность EventType.
  * Встреча может начаться в последнем интервале окна и выйти за endTime.
  */
-function isSlotBookable(availability, slotStart, bookings, slotMinutes = DEFAULT_SLOT_MINUTES) {
+function isSlotBookable(availability, slotStart, durationMinutes, bookings, slotMinutes = DEFAULT_SLOT_MINUTES, now = new Date()) {
   const { date, time } = parseSlotStart(slotStart);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return false;
 
   const t = parseHHMM(time);
-  if (t % slotMinutes !== 0) return false;
+  if (t % slotMinutes !== 0 || !Number.isInteger(durationMinutes) || durationMinutes <= 0) return false;
 
   const startMin = parseHHMM(availability.startTime);
   const endMin = parseHHMM(availability.endTime);
   if (!availability.weekdays.includes(weekdayOf(date))) return false;
+  if (!isDateWithinBookingWindow(date, availability.timeZone, now)) return false;
   if (t < startMin || t >= endMin) return false;
 
   const intervals = busyIntervalsForDate(bookings, date);
-  return !intervals.some((iv) => overlaps(t, slotMinutes, iv.start, iv.duration));
+  return !intervals.some((iv) => overlaps(t, durationMinutes, iv.start, iv.duration));
 }
 
 /** slotStart «YYYY-MM-DDTHH:MM» на сетке slotMinutes? */
@@ -132,4 +176,8 @@ module.exports = {
   slotToUTCDate,
   utcDateToSlot,
   parseSlotStart,
+  isValidTimeZone,
+  bookingWindow,
+  isDateWithinBookingWindow,
+  BOOKING_WINDOW_DAYS,
 };
