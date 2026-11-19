@@ -164,7 +164,7 @@ Dockerfile находится в корне репозитория. Образ �
 
 - Страница гостевой записи: https://call-calendar-6ymh.onrender.com/book
 - Сервис собран из Docker-образа в корне репозитория, слушает порт из переменной `PORT` (на Render задан `10000`)
-- Включён auto-deploy: каждый push в `main` запускает новый деплой
+- Деплой запускается вручную через Render API (`POST /services/{id}/deploys`) или из dashboard; push в `main` сам деплой не запускает — GitHub-интеграция Render не подключена
 - Управление сервисом: [dashboard](https://dashboard.render.com/web/srv-dbvh9drrjlhs73bufsgg)
 
 ### Как деплоилось
